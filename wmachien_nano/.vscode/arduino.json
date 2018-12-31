@@ -1,0 +1,7 @@
+{
+    "sketch": "nano_main.ino",
+    "board": "arduino:avr:nano",
+    "configuration": "cpu=atmega328old",
+    "output": ".build",
+    "port": "COM11"
+}

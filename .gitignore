@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+# FOLDERS
+wmachien_esp8266/.build/*
+wmachien_nano/.build/*
