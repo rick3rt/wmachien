@@ -34,3 +34,4 @@
 # FOLDERS
 wmachien_esp8266/.build/*
 wmachien_nano/.build/*
+wmachien_motor_test/.build/*

@@ -111,8 +111,6 @@ void loop()
     // delay(5000);
 }
 
-
-
 /*
     Read sensor data
         returns 1 if successful

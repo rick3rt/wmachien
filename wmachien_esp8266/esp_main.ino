@@ -69,11 +69,11 @@ float temp_val;                     // air temperature
 time_t last_time_data_received = 0; // unix timestamp at last sensor data received
 
 // keep track of time
-time_t lastRealTime = 0;          // last real time obtained from the internet, in unix timestamp (seconds)
-time_t softwareTime = 0;          // time to track in software
-unsigned long lastRealTimeMs = 0; // last moment in time in millis() counter that the realtime is obtained
-// unsigned long time_update_delay = 10 * 60 * 1000; // 10 #minutes times 60 seconds * 1000 msec/sec= 600.000 seconds = 10 minutes
-unsigned long time_update_delay = 30 * 1000; // 30 seconds
+time_t lastRealTime = 0;                           // last real time obtained from the internet, in unix timestamp (seconds)
+time_t softwareTime = 0;                           // time to track in software
+unsigned long lastRealTimeMs = 0;                  // last moment in time in millis() counter that the realtime is obtained
+const unsigned long time_update_delay = 30 * 1000; // 30 seconds
+const unsigned long sensor_update_delay = 20;      // e.g. 5 minutes = 5*60
 
 /*===================================================================
     Setup for NodeMCU
@@ -124,8 +124,8 @@ void loop()
     ssa.write('S');
     switchLED();
 
-    // request sensor data every 5 minutes
-    if (softwareTime - last_time_data_received > 5*60)
+    // request sensor data every sensor_update_delay seconds
+    if (softwareTime - last_time_data_received > sensor_update_delay)
     {
         Serial.println("requesting data");
         // request the data from the nano
@@ -136,7 +136,7 @@ void loop()
         mqttSendData();
     }
 
-    // delay to 
+    // delay to
     delay(500);
 }
 
