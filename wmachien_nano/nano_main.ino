@@ -7,11 +7,15 @@
 
 */
 
+// TODOS:
+//  -   measure n times and average values, send those... DONE
+//  -   add water control system
+//  -   keep track of time? receive time from esp8266? keep track of time last wattered...
+
 // LIBRARIES
 #include <DHT.h>            // library for reading the DHT22 temp and air humidity sensor
 #include <SoftwareSerial.h> // Software serial library for serial connection on arbitrary pins
 #include <ArduinoJson.h>    // format data in json, to send to esp8266
-// #include <TimeLib.h>     // library for handling time
 
 // PINS ETC.
 #define DHTPIN 2               // what pin the DHT22 is connected to (data, 10K resistor to 5V)
@@ -20,6 +24,14 @@
 #define MOIST_SENSOR_TOP A1    // analog pin for the moisture sensor at the top
 #define MOIST_SENSOR_BOTTOM A2 // analog pin for the moisture sensor at the bottom
 #define LED_PIN 3              // led pin
+
+// Water system
+#define MOTOR_EN 4                                 // motor enable pin
+#define MOTOR_IN1 5                                // motor dir pin 1
+#define MOTOR_IN2 6                                // motor dir pin 2
+#define MOTOR_LED 10                               // motor status led
+unsigned long timeWaterStart;                      // in msec
+const unsigned long waterGiveDuration = 10 * 1000; // in msec
 
 // define global sensor data variables
 float hum_val;
@@ -34,23 +46,6 @@ unsigned long timeSinceSwitch = 0;
 
 // SoftwareSerial
 SoftwareSerial ssa(7, 8); // SoftwareSerial(RX, TX), make sure RX to TX, and TX to RX...
-
-// Serial shit
-// String inputString = "";     // a String to hold incoming data
-// bool stringComplete = false; // whether the string is complete
-
-// Struct to contain sensor data
-typedef struct
-{
-    int moist_top;
-    int moist_bot;
-    int light_level;
-    float hum_val;
-    float temp_val;
-    // etc...
-} sensorData_t;
-
-sensorData_t sensorData; // create instance of struct definition
 
 // instance of DHT sensor
 DHT dht(DHTPIN, DHTTYPE);
@@ -68,6 +63,9 @@ void setup()
     pinMode(LIGHT_SENSOR, INPUT);
     pinMode(MOIST_SENSOR_TOP, INPUT);
     pinMode(MOIST_SENSOR_BOTTOM, INPUT);
+
+    // init motor
+    initMotor();
 
     // led for debugging
     pinMode(LED_PIN, OUTPUT);
@@ -98,45 +96,86 @@ void loop()
     {
     case 'D':
         // data is requested
-        readSensorData();        // read the data.
+        readSensorData(); // read the data.
+        break;
+    case 'J':
+        // send the requested data
         serialSendDataJson();    // send the data
         serialPrettyPrintData(); // print the sensor data
+        break;
     case 'S':
         // switch the LED_PIN
         switchLED();
+        break;
+    case 'W':
+        Serial.println("wattering is not finished");
+        // give water to the plant! (holds system for 10 seconds... )
+        waterPlant();
+        // flush software serial after to discard commands during waterring
+        softSerialFlush();
+        break;
     }
-    // Serial.println("dit is een test");
-    // serialPrettyPrintData();
-    // serialSendDataJson();
-    // delay(5000);
 }
 
 /*
     Read sensor data
-        returns 1 if successful
-        returns 0 if read e.g. nan
 */
 int readSensorData()
 {
-    // Reading temperature or humidity takes about 250 milliseconds!
-    // Sensor readings may also be up to 2 seconds 'old' (its a very slow sensor)
-    hum_val = dht.readHumidity();
-    // Read temperature as Celsius
-    temp_val = dht.readTemperature();
+    // number of successive reads
+    int n = 5;
+    // init data arrays
+    float hum_val_array[n];    // float hum_val;
+    float temp_val_array[n];   // float temp_val;
+    int light_level_array[n];  // int light_level;
+    int moist_top_array[n];    // int moist_top;
+    int moist_bottom_array[n]; // int moist_bottom;
 
-    // read light level
-    light_level = digitalRead(LIGHT_SENSOR); // will be one or zero
-
-    // read soil moisture
-    moist_top = analogRead(MOIST_SENSOR_TOP);
-    moist_bottom = analogRead(MOIST_SENSOR_BOTTOM);
-
-    // Check if any reads failed and exit early (to try again).
-    if (isnan(hum_val) || isnan(temp_val))
+    // read sensor data n times
+    for (int i = 0; i < n; i++)
     {
-        return 0;
+        // read dht sensor data
+        do
+        {
+            hum_val_array[i] = dht.readHumidity();
+            temp_val_array[i] = dht.readTemperature();
+            // check if nans, if so, repeat measurement
+        } while (isnan(hum_val_array[i]) || isnan(temp_val_array[i]));
+
+        // read light level (1 if light, 0 if dark)
+        light_level_array[i] = !digitalRead(LIGHT_SENSOR); // will be one or zero (invert since sensor gives inverted val)
+
+        // read soil moisture (inverse, makes more sense)
+        moist_top_array[i] = 1024 - analogRead(MOIST_SENSOR_TOP);
+        moist_bottom_array[i] = 1024 - analogRead(MOIST_SENSOR_BOTTOM);
     }
+
+    // calculate the averages
+    hum_val = calcAverage(hum_val_array, n);
+    temp_val = calcAverage(temp_val_array, n);
+    light_level = calcAverage(light_level_array, n);
+    moist_top = calcAverage(moist_top_array, n);
+    moist_bottom = calcAverage(moist_bottom_array, n);
+
     return 1;
+}
+
+// functions to calculate averages of arrays (int and float arrays)
+float calcAverage(float *arrayIn, int len) // assuming array is int.
+{
+    float sum = 0;
+    for (int i = 0; i < len; i++)
+        sum += arrayIn[i];
+
+    return ((float)sum) / len; // average will be fractional, so float may be appropriate.
+}
+int calcAverage(int *arrayIn, int len) // assuming array is int.
+{
+    long sum = 0L;
+    for (int i = 0; i < len; i++)
+        sum += arrayIn[i];
+
+    return (int)round(((float)sum) / len); // average will be fractional, so float may be appropriate.
 }
 
 /*
@@ -173,18 +212,6 @@ int serialSendDataJson()
     root.printTo(ssa);
     Serial.println("printed buffer");
 
-    // // check answer from nano
-    // while (ssa.available() > 0)
-    // {
-    //     char answer = Serial.read();
-    //     if (answer == 'y')
-    //     {
-    //         // success
-    //         Serial.println("success");
-    //         return 1;
-    //     }
-    // }
-    // no success
     return 1;
 }
 
@@ -211,4 +238,59 @@ void switchLED()
 {
     LED_status = !LED_status;
     digitalWrite(LED_PIN, LED_status);
+}
+
+// function to init the motor
+void initMotor()
+{
+    // set pinmode
+    pinMode(MOTOR_EN, OUTPUT);
+    pinMode(MOTOR_IN1, OUTPUT);
+    pinMode(MOTOR_IN2, OUTPUT);
+    pinMode(MOTOR_LED, OUTPUT);
+    // write all low, except for dir
+    digitalWrite(MOTOR_EN, LOW);
+    digitalWrite(MOTOR_LED, LOW);
+    // Set initial rotation direction
+    digitalWrite(MOTOR_IN1, HIGH); // reverse
+    digitalWrite(MOTOR_IN2, LOW);  // reverse
+}
+
+// function to water the plant!
+void waterPlant()
+{
+    // status message
+    Serial.println("waterring");
+
+    // start water moment
+    timeWaterStart = millis();
+    digitalWrite(MOTOR_EN, HIGH);
+    digitalWrite(MOTOR_LED, HIGH);
+
+    // while loop to water
+    while (millis() - timeWaterStart < waterGiveDuration)
+    {
+        ;
+    }
+
+    // stop motor
+    digitalWrite(MOTOR_EN, LOW);
+    digitalWrite(MOTOR_LED, LOW);
+}
+
+// function to flush the hardware serial
+void serialFlush()
+{
+    while (Serial.available() > 0)
+    {
+        char t = Serial.read();
+    }
+}
+// function to flush the software serial
+void softSerialFlush()
+{
+    while (ssa.available() > 0)
+    {
+        char t = ssa.read();
+    }
 }

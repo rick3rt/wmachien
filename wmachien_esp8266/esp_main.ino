@@ -1,6 +1,9 @@
 /*
     Program for the NodeMCU (based on ESP8266) wmachien
     
+    ESP8266 MAC Address: 84:F3:EB:81:4D:A3
+    DHCP Static IP :     192.168.0.201 (on laprowainternet_2.4)
+
     Program to receive data from arduino (serial, RX & TX)
         And write this data to the sd card
 
@@ -15,6 +18,20 @@
     MQTT broker: ThingsBoard (demo server)
         Device ID       7bd5a970-0865-11e9-a1f6-a3a281c054e4
         Access token    rinkert_wmachien
+
+    NodeMCU pin numbers
+        LED_BUILTIN 16
+        D0          16
+        D1          5
+        D2          4
+        D3          0
+        D4          2
+        D5          14
+        D6          12
+        D7          13
+        D8          15
+        D9          3
+        D10         1
 */
 
 // include libraries
@@ -27,6 +44,13 @@
 #include <PubSubClient.h>     // MQTT library
 #include <SoftwareSerial.h>   // Software serial library for serial connection on arbitrary pins
 #include <ArduinoJson.h>      // receive formatted data in json, from arduino nano
+
+// MQTT GPIO control
+#define GPIO0 0                       // D3 = 0
+#define GPIO2 2                       // D4 = 2
+#define GPIO0_PIN 0                   // D3 = 0
+#define GPIO2_PIN 2                   // D4 = 2
+boolean gpioState[] = {false, false}; // We assume that all GPIOs are LOW
 
 // WiFi
 ESP8266WiFiMulti wifiMulti; // Create an instance of the ESP8266WiFiMulti class, called 'wifiMulti'
@@ -70,8 +94,9 @@ time_t last_time_data_received = 0; // unix timestamp at last sensor data receiv
 time_t lastRealTime = 0;                           // last real time obtained from the internet, in unix timestamp (seconds)
 time_t softwareTime = 0;                           // time to track in software
 unsigned long lastRealTimeMs = 0;                  // last moment in time in millis() counter that the realtime is obtained
-const unsigned long time_update_delay = 30 * 1000; // 30 seconds
-const unsigned long sensor_update_delay = 20;      // e.g. 5 minutes = 5*60
+const unsigned long time_update_delay = 60 * 1000; // 60 seconds, update the realtime every xx seconds
+const unsigned long sensor_update_delay = 60;      // 1 minute = 60 sec
+unsigned long lastFlash = 0;
 
 /*===================================================================
     Setup for NodeMCU
@@ -82,6 +107,11 @@ void setup()
     Serial.begin(115200);
     ssa.begin(115200);
     pinMode(LED_BUILTIN, OUTPUT);
+    // pins for mqtt gpio control, set mode and set low
+    pinMode(GPIO0_PIN, OUTPUT);
+    pinMode(GPIO2_PIN, OUTPUT);
+    digitalWrite(GPIO0_PIN, LOW);
+    digitalWrite(GPIO2_PIN, LOW);
 
     // initialize the SD card
     initSDCard();
@@ -94,6 +124,7 @@ void setup()
 
     // start MQTT connection
     client.setServer(thingsboardServer, 1883);
+    client.setCallback(mqttCallbackOnMessage);
 
     // init the timers
     storeCurrentTime(/* printing */ false);
@@ -118,10 +149,6 @@ void loop()
     softwareTime = lastRealTime + (timeDiff / 1000); // go from msec back to secs (divide by 1000)
     // printCurrentTime(softwareTime);
 
-    // switch LED on nano debug, and on ESP8266 for effect
-    ssa.write('S');
-    switchLED();
-
     // request sensor data every sensor_update_delay seconds
     if (softwareTime - last_time_data_received > sensor_update_delay)
     {
@@ -134,8 +161,30 @@ void loop()
         mqttSendData();
     }
 
-    // delay to
-    delay(500);
+    // mqtt client loop, check for incoming messages
+    if (!client.connected())
+    {
+        Serial.println("reconnecting to mqtt broker");
+        mqttReconnect();
+    }
+    client.loop();
+    // bool isLooping = client.loop();
+    // if (isLooping)
+    // {
+    //     Serial.println("looping connection good");
+    // }
+    // else
+    // {
+    //     Serial.println("looping no goood");
+    // }
+
+    // switch LED on nano debug, and on ESP8266 for effect with delay of 500 msec
+    if (millis() - lastFlash > 500)
+    {
+        lastFlash = millis();
+        ssa.write('S');
+        switchLED();
+    }
 }
 
 // ===========================================================================
@@ -392,11 +441,16 @@ void mqttReconnect()
         }
         Serial.print("Connecting to ThingsBoard node ...");
 
-        // Attempt to connect (clientId, username, password)
+        // Attempt to connect (clientId, username, password) (clientID does not matter)
         if (client.connect("ESP8266 DEMO DEVICE", TOKEN, NULL))
         // if (client.connect(mqttClientID, TOKEN, NULL))
         {
             Serial.println("[DONE]");
+            // Subscribing to receive RPC requests
+            client.subscribe("v1/devices/me/rpc/request/+");
+            // Sending current GPIO status
+            Serial.println("Sending current GPIO status ...");
+            client.publish("v1/devices/me/attributes", get_gpio_status().c_str());
         }
         else
         {
@@ -468,13 +522,16 @@ void requestSensorData()
     int success = 0;
     while (success == 0)
     {
-        // write 'D' to request data
+        // write 'D' to request measuring of data
         ssa.write('D');
+        // measuring takes approx 275 msec, so long delay
+        delay(500);
+        // write 'J' to request sending of data
+        ssa.write('J');
         success = receiveJsonData();
         if (success == 0)
         {
             Serial.println("not successfull... flushing serial buffer");
-            // FIXME: serial flush? flush the entire serial buffer, try
             softSerialFlush();
             Serial.println("additional delay 3s");
             delay(3000);
@@ -542,4 +599,86 @@ void switchLED()
 {
     LED_status = !LED_status;
     digitalWrite(LED_BUILTIN, LED_status);
+}
+
+// ===========================================================================
+//                                  MQTT CALLBACK FUNCTIONS
+// ===========================================================================
+
+// The callback for when a PUBLISH message is received from the server.
+void mqttCallbackOnMessage(const char *topic, byte *payload, unsigned int length)
+{
+    Serial.println("Message Received! -->");
+    // copy incoming payload to json formatted char array
+    char json[length + 1];
+    strncpy(json, (char *)payload, length);
+    json[length] = '\0';
+
+    Serial.print("Topic: ");
+    Serial.println(topic);
+    Serial.print("Message: ");
+    Serial.println(json);
+
+    // Decode JSON request
+    StaticJsonBuffer<200> jsonBuffer;
+    JsonObject &data = jsonBuffer.parseObject((char *)json);
+    // if json does not make sense:
+    if (!data.success())
+    {
+        Serial.println("parseObject() failed");
+        return;
+    }
+
+    // Check request method
+    String methodName = String((const char *)data["method"]);
+
+    if (methodName.equals("getGpioStatus"))
+    {
+        // Reply with GPIO status
+        String responseTopic = String(topic);
+        responseTopic.replace("request", "response");
+        client.publish(responseTopic.c_str(), get_gpio_status().c_str());
+    }
+    else if (methodName.equals("setGpioStatus"))
+    {
+        // Update GPIO status and reply
+        set_gpio_status(data["params"]["pin"], data["params"]["enabled"]);
+        String responseTopic = String(topic);
+        responseTopic.replace("request", "response");
+        client.publish(responseTopic.c_str(), get_gpio_status().c_str());
+        client.publish("v1/devices/me/attributes", get_gpio_status().c_str());
+    }
+}
+
+String get_gpio_status()
+{
+    // Prepare gpios JSON payload string
+    StaticJsonBuffer<200> jsonBuffer;
+    JsonObject &data = jsonBuffer.createObject();
+    data[String(GPIO0_PIN)] = gpioState[0] ? true : false;
+    data[String(GPIO2_PIN)] = gpioState[1] ? true : false;
+    char payload[256];
+    data.printTo(payload, sizeof(payload));
+    String strPayload = String(payload);
+    Serial.print("Get gpio status: ");
+    Serial.println(strPayload);
+    return strPayload;
+}
+
+void set_gpio_status(int pin, boolean enabled)
+{
+    if (pin == GPIO0_PIN)
+    {
+        // Output GPIOs state
+        digitalWrite(GPIO0, enabled ? HIGH : LOW);
+        // Update GPIOs state
+        gpioState[0] = enabled;
+    }
+    else if (pin == GPIO2_PIN)
+    {
+        // Output GPIOs state
+        digitalWrite(GPIO2, enabled ? HIGH : LOW);
+        // Update GPIOs state
+        gpioState[1] = enabled;
+    }
 }
