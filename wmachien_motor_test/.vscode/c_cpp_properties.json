@@ -1,0 +1,14 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "C:\\Users\\rickw\\OneDrive\\Programming\\Arduino\\tools\\**",
+                "C:\\Users\\rickw\\OneDrive\\Programming\\Arduino\\hardware\\WAV\\avr\\**"
+            ],
+            "forcedInclude": [],
+            "intelliSenseMode": "msvc-x64"
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,5 @@
+{
+    "sketch": "motor_test.ino",
+    "board": "WAV:avr:lardu_328e",
+    "port": "COM4"
+}

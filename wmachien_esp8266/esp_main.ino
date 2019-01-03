@@ -36,8 +36,6 @@ const char *ssid2 = "laprowainternet_5.0";
 const char *pass2 = "geenidee";
 const char *ssid3 = "LekkerBrownenN";
 const char *pass3 = "wegwezen";
-// const char *ssid4 = "wifinetwerk";
-// const char *pass4 = "0641206012joep";
 int status = WL_IDLE_STATUS;
 
 // Setup UDP for NTP time requests
@@ -69,11 +67,11 @@ float temp_val;                     // air temperature
 time_t last_time_data_received = 0; // unix timestamp at last sensor data received
 
 // keep track of time
-time_t lastRealTime = 0;          // last real time obtained from the internet, in unix timestamp (seconds)
-time_t softwareTime = 0;          // time to track in software
-unsigned long lastRealTimeMs = 0; // last moment in time in millis() counter that the realtime is obtained
-// unsigned long time_update_delay = 10 * 60 * 1000; // 10 #minutes times 60 seconds * 1000 msec/sec= 600.000 seconds = 10 minutes
-unsigned long time_update_delay = 30 * 1000; // 30 seconds
+time_t lastRealTime = 0;                           // last real time obtained from the internet, in unix timestamp (seconds)
+time_t softwareTime = 0;                           // time to track in software
+unsigned long lastRealTimeMs = 0;                  // last moment in time in millis() counter that the realtime is obtained
+const unsigned long time_update_delay = 30 * 1000; // 30 seconds
+const unsigned long sensor_update_delay = 20;      // e.g. 5 minutes = 5*60
 
 /*===================================================================
     Setup for NodeMCU
@@ -124,8 +122,8 @@ void loop()
     ssa.write('S');
     switchLED();
 
-    // request sensor data every 5 minutes
-    if (softwareTime - last_time_data_received > 5*60)
+    // request sensor data every sensor_update_delay seconds
+    if (softwareTime - last_time_data_received > sensor_update_delay)
     {
         Serial.println("requesting data");
         // request the data from the nano
@@ -136,12 +134,12 @@ void loop()
         mqttSendData();
     }
 
-    // delay to 
+    // delay to
     delay(500);
 }
 
 // ===========================================================================
-//                                  OTHER FUNCTIONS
+//                                  SD FUNCTIONS
 // ===========================================================================
 
 /*===================================================================
@@ -208,6 +206,10 @@ void writeToSD()
     }
 }
 
+// ===========================================================================
+//                                  WIFI AND INTERNET FUNCTIONS
+// ===========================================================================
+
 /*===================================================================
     function to initialize the wifi connection
 ===================================================================*/
@@ -244,6 +246,10 @@ void startUDP()
     Serial.print("Local port:\t");
     Serial.println(UDP.localPort());
 }
+
+// ===========================================================================
+//                                  TIME FUNCTIONS
+// ===========================================================================
 
 /*===================================================================
     Function keep polling time till obtained, and store it in global variables
@@ -313,6 +319,33 @@ time_t getCurrentTime()
 }
 
 /*===================================================================
+    Function to send the time request to the NTP UDP server
+===================================================================*/
+void sendNTPpacket(IPAddress &address)
+{
+    Serial.println("sending NTP packet...");
+    // set all bytes in the buffer to 0
+    memset(packetBuffer, 0, NTP_PACKET_SIZE);
+    // Initialize values needed to form NTP request
+    // (see URL above for details on the packets)
+    packetBuffer[0] = 0b11100011; // LI, Version, Mode
+    packetBuffer[1] = 0;          // Stratum, or type of clock
+    packetBuffer[2] = 6;          // Polling Interval
+    packetBuffer[3] = 0xEC;       // Peer Clock Precision
+    // 8 bytes of zero for Root Delay & Root Dispersion
+    packetBuffer[12] = 49;
+    packetBuffer[13] = 0x4E;
+    packetBuffer[14] = 49;
+    packetBuffer[15] = 52;
+
+    // all NTP fields have been given values, now
+    // you can send a packet requesting a timestamp:
+    UDP.beginPacket(address, 123); //NTP requests are to port 123
+    UDP.write(packetBuffer, NTP_PACKET_SIZE);
+    UDP.endPacket();
+}
+
+/*===================================================================
     Function to print the current time to Serial monitor
 ===================================================================*/
 // utility function for digital clock display: prints preceding colon and leading 0
@@ -340,32 +373,9 @@ void printCurrentTime(time_t curTime)
     Serial.println(curTime);
 }
 
-/*===================================================================
-    Function to send the time request to the NTP UDP server
-===================================================================*/
-void sendNTPpacket(IPAddress &address)
-{
-    Serial.println("sending NTP packet...");
-    // set all bytes in the buffer to 0
-    memset(packetBuffer, 0, NTP_PACKET_SIZE);
-    // Initialize values needed to form NTP request
-    // (see URL above for details on the packets)
-    packetBuffer[0] = 0b11100011; // LI, Version, Mode
-    packetBuffer[1] = 0;          // Stratum, or type of clock
-    packetBuffer[2] = 6;          // Polling Interval
-    packetBuffer[3] = 0xEC;       // Peer Clock Precision
-    // 8 bytes of zero for Root Delay & Root Dispersion
-    packetBuffer[12] = 49;
-    packetBuffer[13] = 0x4E;
-    packetBuffer[14] = 49;
-    packetBuffer[15] = 52;
-
-    // all NTP fields have been given values, now
-    // you can send a packet requesting a timestamp:
-    UDP.beginPacket(address, 123); //NTP requests are to port 123
-    UDP.write(packetBuffer, NTP_PACKET_SIZE);
-    UDP.endPacket();
-}
+// ===========================================================================
+//                                  MQTT FUNCTIONS
+// ===========================================================================
 
 /*===================================================================
     Function to reconnect to MQTT broker if connection lost
@@ -446,6 +456,10 @@ void mqttSendData()
     Serial.println(attributes);
 }
 
+// ===========================================================================
+//                                  COMMUNICATION WITH NANO
+// ===========================================================================
+
 /*===================================================================
     function to request sensor data in json format from arduino nano
 ===================================================================*/
@@ -522,102 +536,10 @@ void softSerialFlush()
         char t = ssa.read();
     }
 }
+
 // function to switch the builtin led: LED_BUILTIN
 void switchLED()
 {
     LED_status = !LED_status;
     digitalWrite(LED_BUILTIN, LED_status);
 }
-/*===================================================================
-    TODOS:
-        get time+date from internet ==> CHECK ==> success
-        write time+date to csv
-
-        get data from arduino
-        write data from arduino to csv
-
-        connect to mqtt broker ==> CHECK
-
-===================================================================*/
-
-//===========================================
-// typdef struct
-// {
-//     int cmd_ACK;
-//     String raw_result;
-//     int cmd_results[8];
-// } ctlrResults_t;
-
-// ctlrResults_t ctlrResults; // This is a global variable
-
-// void setup()
-// {
-//     do_something(&ctlrResults);
-//     Serial.begin(115200);
-//     Serial.print("Raw Results:");
-//     Serial.println(ctlrResults.raw_result);
-// }
-
-// void loop()
-// {
-// }
-
-//===========================================
-
-// void do_something(ctlrResults_t *r)
-// {
-//     r->cmd_ACK = 1;
-//     r->raw_result = "M1:323:M2:435";
-//     r->cmd_results[0] = 323;
-//     r->cmd_results[1] = 435;
-// }
-
-// typedef struct
-// {
-//     int8_t id;
-//     int16_t messageCount;
-//     int16_t time;
-// } __attribute__((__packed__)) packet_header_t;
-
-// typedef struct
-// {
-//     packet_header_t header;
-//     int16_t rotationRate;
-//     int16_t therm1;
-//     int16_t therm2;
-//     int16_t heading;
-//     //uint32_t pressure;
-//     int16_t airTemp;
-//     int16_t checksum;
-// } __attribute__((__packed__)) data_packet_t;
-
-// data_packet_t dp;
-
-// void setup()
-// {
-//     Serial.begin(115200);
-//     dp.header.id = 99;
-//     dp.header.messageCount = 0;
-//     dp.header.time = 1;
-//     dp.rotationRate = 2;
-//     dp.therm1 = 3;
-//     dp.therm2 = 4;
-//     dp.heading = 5;
-//     dp.airTemp = 6;
-//     dp.checksum = 7;
-// }
-
-// void loop()
-// {
-//     unsigned short checkSum;
-
-//     unsigned long uBufSize = sizeof(data_packet_t);
-//     char pBuffer[uBufSize];
-
-//     memcpy(pBuffer, &dp, uBufSize);
-//     for (int i = 0; i < uBufSize; i++)
-//     {
-//         Serial.print(pBuffer[i]);
-//     }
-//     Serial.println();
-// }
