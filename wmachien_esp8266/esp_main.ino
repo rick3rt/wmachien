@@ -45,11 +45,12 @@
 #include <SoftwareSerial.h>   // Software serial library for serial connection on arbitrary pins
 #include <ArduinoJson.h>      // receive formatted data in json, from arduino nano
 
-// MQTT GPIO control
+// MQTT AND OTHER GPIO control
 #define GPIO0 0                       // D3 = 0
 #define GPIO2 2                       // D4 = 2
 #define GPIO0_PIN 0                   // D3 = 0
 #define GPIO2_PIN 2                   // D4 = 2
+#define NANO_RESET_PIN 14             // D5
 boolean gpioState[] = {false, false}; // We assume that all GPIOs are LOW
 
 // WiFi
@@ -91,12 +92,13 @@ float temp_val;                     // air temperature
 time_t last_time_data_received = 0; // unix timestamp at last sensor data received
 
 // keep track of time
-time_t lastRealTime = 0;                           // last real time obtained from the internet, in unix timestamp (seconds)
-time_t softwareTime = 0;                           // time to track in software
-unsigned long lastRealTimeMs = 0;                  // last moment in time in millis() counter that the realtime is obtained
-const unsigned long time_update_delay = 60 * 1000; // 60 seconds, update the realtime every xx seconds
-const unsigned long sensor_update_delay = 60;      // 1 minute = 60 sec
-unsigned long lastFlash = 0;
+time_t lastRealTime = 0;                                // last real time obtained from the internet, in unix timestamp (seconds)
+time_t softwareTime = 0;                                // time to track in software
+unsigned long lastFlash = 0;                            // flashing nano and NodeMCU leds
+unsigned long lastRealTimeMs = 0;                       // last moment in time in millis() counter that the realtime is obtained
+const unsigned long time_update_delay = 60 * 1000;      // 60 seconds, update the realtime every xx seconds
+const unsigned long sensor_update_delay = 60;           // 1 minute = 60 sec
+const unsigned long system_restart_duration = 86400000; // 1 day = 86.400.000 msec
 
 /*===================================================================
     Setup for NodeMCU
@@ -110,8 +112,10 @@ void setup()
     // pins for mqtt gpio control, set mode and set low
     pinMode(GPIO0_PIN, OUTPUT);
     pinMode(GPIO2_PIN, OUTPUT);
+    pinMode(NANO_RESET_PIN, OUTPUT);
     digitalWrite(GPIO0_PIN, LOW);
     digitalWrite(GPIO2_PIN, LOW);
+    digitalWrite(NANO_RESET_PIN, LOW);
 
     // initialize the SD card
     initSDCard();
@@ -121,6 +125,9 @@ void setup()
 
     // start UDP
     startUDP();
+
+    // reset the arduino nano
+    resetNano();
 
     // start MQTT connection
     client.setServer(thingsboardServer, 1883);
@@ -135,6 +142,12 @@ void setup()
 ===================================================================*/
 void loop()
 {
+    // check if time to reset system
+    if (millis() > system_restart_duration)
+    {
+        // write 'R' to call for a reset
+        ssa.write('R');
+    }
 
     // if 10 minutes past since last time update, get new time:
     unsigned long timeDiff = millis() - lastRealTimeMs;
@@ -204,9 +217,9 @@ void initSDCard()
         while (1)
         {
             digitalWrite(LED_BUILTIN, HIGH);
-            delay(200);
+            delay(100);
             digitalWrite(LED_BUILTIN, LOW);
-            delay(800);
+            delay(900);
         }
     }
     Serial.println("initialization done.");
@@ -599,6 +612,15 @@ void switchLED()
 {
     LED_status = !LED_status;
     digitalWrite(LED_BUILTIN, LED_status);
+}
+
+// method to reset the arduino nano
+void resetNano()
+{
+    Serial.println("Resetting the nano");
+    digitalWrite(NANO_RESET_PIN, HIGH);
+    delay(100);
+    digitalWrite(NANO_RESET_PIN, LOW);
 }
 
 // ===========================================================================

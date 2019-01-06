@@ -24,14 +24,16 @@
 #define MOIST_SENSOR_TOP A1    // analog pin for the moisture sensor at the top
 #define MOIST_SENSOR_BOTTOM A2 // analog pin for the moisture sensor at the bottom
 #define LED_PIN 3              // led pin
+#define ESP_RESET_PIN 11       // connected to the esp8266 reset pin
 
 // Water system
 #define MOTOR_EN 4                                 // motor enable pin
 #define MOTOR_IN1 5                                // motor dir pin 1
 #define MOTOR_IN2 6                                // motor dir pin 2
-#define MOTOR_LED 10                               // motor status led
+#define MOTOR_BUTTON 9                             // button to force motor
 unsigned long timeWaterStart;                      // in msec
 const unsigned long waterGiveDuration = 10 * 1000; // in msec
+// #define MOTOR_LED 10                               // motor status led
 
 // define global sensor data variables
 float hum_val;
@@ -82,8 +84,19 @@ void setup()
     Serial.println("Ready for work");
 }
 
+int button_state = 0;
+int prev_button_state = 0;
+
 void loop()
 {
+    // check for button input and turn on motor if pressed
+    button_state = digitalRead(MOTOR_BUTTON);
+    if (button_state != prev_button_state)
+    {
+        // set it to high or low depending on change
+        digitalWrite(MOTOR_EN, button_state);
+    }
+
     // serial events...
     char receive = NULL;
     if (ssa.available() > 0)
@@ -113,6 +126,18 @@ void loop()
         waterPlant();
         // flush software serial after to discard commands during waterring
         softSerialFlush();
+        break;
+    case 'R':
+        // code to init reset ESP and nano
+        Serial.println("Resetting ESP8266...");
+        digitalWrite(ESP_RESET_PIN, HIGH);
+        delay(100);
+        digitalWrite(ESP_RESET_PIN, LOW);
+        Serial.print("Done, waiting for reset signal from NodeMCU.");
+        while (1)
+        {
+            Serial.print(".");
+        }
         break;
     }
 }
@@ -247,10 +272,13 @@ void initMotor()
     pinMode(MOTOR_EN, OUTPUT);
     pinMode(MOTOR_IN1, OUTPUT);
     pinMode(MOTOR_IN2, OUTPUT);
-    pinMode(MOTOR_LED, OUTPUT);
+    pinMode(MOTOR_BUTTON, INPUT);
+    // pinMode(MOTOR_LED, OUTPUT);
+
     // write all low, except for dir
     digitalWrite(MOTOR_EN, LOW);
-    digitalWrite(MOTOR_LED, LOW);
+    // digitalWrite(MOTOR_LED, LOW);
+
     // Set initial rotation direction
     digitalWrite(MOTOR_IN1, HIGH); // reverse
     digitalWrite(MOTOR_IN2, LOW);  // reverse
@@ -265,7 +293,7 @@ void waterPlant()
     // start water moment
     timeWaterStart = millis();
     digitalWrite(MOTOR_EN, HIGH);
-    digitalWrite(MOTOR_LED, HIGH);
+    // digitalWrite(MOTOR_LED, HIGH);
 
     // while loop to water
     while (millis() - timeWaterStart < waterGiveDuration)
@@ -275,7 +303,7 @@ void waterPlant()
 
     // stop motor
     digitalWrite(MOTOR_EN, LOW);
-    digitalWrite(MOTOR_LED, LOW);
+    // digitalWrite(MOTOR_LED, LOW);
 }
 
 // function to flush the hardware serial
