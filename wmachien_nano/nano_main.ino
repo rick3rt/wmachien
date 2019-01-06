@@ -7,6 +7,9 @@
 
 */
 
+// TODO:
+//      - water control loop
+
 // LIBRARIES
 #include <DHT.h>            // library for reading the DHT22 temp and air humidity sensor
 #include <SoftwareSerial.h> // Software serial library for serial connection on arbitrary pins
@@ -23,13 +26,13 @@
 #define LED_PIN 3              // led pin
 
 // Water system
-#define MOTOR_EN 4                                 // motor enable pin
-#define MOTOR_IN1 5                                // motor dir pin 1
-#define MOTOR_IN2 6                                // motor dir pin 2
-#define MOTOR_BUTTON 9                             // button to force motor
-unsigned long timeWaterStart;                      // in msec
-const unsigned long waterGiveDuration = 10 * 1000; // in msec = 10 sec
-// #define MOTOR_LED 10                               // motor status led
+#define MOTOR_EN 4            // motor enable pin
+#define MOTOR_IN1 5           // motor dir pin 1
+#define MOTOR_IN2 6           // motor dir pin 2
+#define MOTOR_BUTTON 9        // button to force motor
+unsigned long timeWaterStart; // in msec
+int waterGiveDuration = 10;   // in seconds
+// #define MOTOR_LED 10       // motor status led
 
 // define global sensor data variables
 float hum_val;
@@ -97,13 +100,23 @@ void loop()
     // FORCE WATER
     // check for button input and turn on motor if pressed
     int button_state = digitalRead(MOTOR_BUTTON);
-    while (button_state)
+    if (button_state)
     {
-        // read the current buttonstate, and write it to the motor enable pin
-        button_state = digitalRead(MOTOR_BUTTON);
-        digitalWrite(MOTOR_EN, button_state);
-        // wdt reset while button pressed
-        // wdt_reset();
+        unsigned long startTimeWater = millis();
+        while (button_state)
+        {
+            // read the current buttonstate, and write it to the motor enable pin
+            button_state = digitalRead(MOTOR_BUTTON);
+            digitalWrite(MOTOR_EN, button_state);
+            // wdt reset while button pressed
+            wdt_reset();
+        }
+        unsigned long waterDurationMs = millis() - startTimeWater;
+
+        // send message with seconds that water is given
+        ssa.write('T');             // init msg
+        ssa.print(waterDurationMs); // duration in msec
+        ssa.write('E');             // end of msg
     }
 
     // NORMAL SERIAL EVENTS
@@ -296,11 +309,20 @@ void waterPlant()
     // digitalWrite(MOTOR_LED, HIGH);
 
     // delay to keep water flowing
-    delay(waterGiveDuration);
+    for (int i = 0; i < waterGiveDuration; i++)
+    {
+        delay(1000); // i times 1 sec delay
+        wdt_reset();
+    }
 
     // stop motor
     digitalWrite(MOTOR_EN, LOW);
     // digitalWrite(MOTOR_LED, LOW);
+
+    // send message with seconds that water is given
+    ssa.write('T');                                      // init msg
+    ssa.print((unsigned int)(waterGiveDuration * 1000)); // duration in msec
+    ssa.write('E');                                      // end of msg
 }
 
 // function to flush the hardware serial

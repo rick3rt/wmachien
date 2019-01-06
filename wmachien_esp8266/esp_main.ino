@@ -92,6 +92,7 @@ int moist_extra;                    // moisture at the extra sensor
 int light_level;                    // light level (1 or 0)
 float hum_val;                      // air humidity
 float temp_val;                     // air temperature
+float waterDurationSec = 0;         // duration of water giving
 time_t last_time_data_received = 0; // unix timestamp at last sensor data received
 
 // keep track of time
@@ -187,6 +188,24 @@ void loop()
         lastFlash = millis();
         ssa.write('S');
         switchLED();
+    }
+
+    // check for incoming messages from nano
+    if (ssa.available() > 0)
+    {
+        char receive = ssa.read();
+        switch (receive)
+        {
+        case 'T':
+            // water is given to plant, notify server
+            unsigned int waterDuration = ssa.parseInt(); // in msec
+            char end_msg = ssa.read();                   // read the closing message
+            if (end_msg == 'E')
+                Serial.println("end message received");
+
+            waterDurationSec += (float)(waterDuration / 1000);
+            break;
+        }
     }
 }
 
@@ -477,12 +496,14 @@ void mqttSendData()
         mqttReconnect();
     }
 
+    // convert values to strings
     String s_moist_top = String(moist_top);
     String s_moist_bottom = String(moist_bottom);
     String s_moist_extra = String(moist_extra);
     String s_light_level = String(light_level);
     String s_hum_val = String(hum_val);
     String s_temp_val = String(temp_val);
+    String s_water = String(waterDurationSec);
     String s_last_time_data_received = String(last_time_data_received);
 
     // Prepare a JSON payload string
@@ -504,6 +525,9 @@ void mqttSendData()
     payload += ",";
     payload += "\"tempval\":";
     payload += s_temp_val;
+    payload += ",";
+    payload += "\"waterDur\":";
+    payload += s_temp_val;
     payload += "}";
 
     // DONT sent timestamp, does not work
@@ -517,6 +541,9 @@ void mqttSendData()
     payload.toCharArray(attributes, 200);
     client.publish("v1/devices/me/telemetry", attributes);
     Serial.println(attributes);
+
+    // reset the water give duration, since it is publised
+    waterDurationSec = 0;
 }
 
 // ===========================================================================
