@@ -4,7 +4,10 @@
             "name": "Win32",
             "includePath": [
                 "C:\\Users\\rickw\\OneDrive\\Programming\\Arduino\\tools\\**",
-                "C:\\Users\\rickw\\OneDrive\\Programming\\Arduino\\hardware\\WAV\\avr\\**"
+                "C:\\Users\\rickw\\OneDrive\\Programming\\Arduino\\hardware\\WAV\\avr\\**",
+                "C:\\Program Files (x86)\\Arduino\\tools\\**",
+                "C:\\Program Files (x86)\\Arduino\\hardware\\arduino\\avr\\**",
+                "C:\\Users\\rickw\\OneDrive\\Programming\\Arduino\\libraries\\**"
             ],
             "forcedInclude": [],
             "intelliSenseMode": "msvc-x64"

@@ -7,15 +7,11 @@
 
 */
 
-// TODOS:
-//  -   measure n times and average values, send those... DONE
-//  -   add water control system
-//  -   keep track of time? receive time from esp8266? keep track of time last wattered...
-
 // LIBRARIES
 #include <DHT.h>            // library for reading the DHT22 temp and air humidity sensor
 #include <SoftwareSerial.h> // Software serial library for serial connection on arbitrary pins
 #include <ArduinoJson.h>    // format data in json, to send to esp8266
+#include <avr/wdt.h>        // watchdog timer
 
 // PINS ETC.
 #define DHTPIN 2               // what pin the DHT22 is connected to (data, 10K resistor to 5V)
@@ -23,8 +19,8 @@
 #define LIGHT_SENSOR A0        // analog pin for the light sensor
 #define MOIST_SENSOR_TOP A1    // analog pin for the moisture sensor at the top
 #define MOIST_SENSOR_BOTTOM A2 // analog pin for the moisture sensor at the bottom
+#define MOIST_SENSOR_EXTRA A3  // analog pin for an additional moisture sensor
 #define LED_PIN 3              // led pin
-#define ESP_RESET_PIN 11       // connected to the esp8266 reset pin
 
 // Water system
 #define MOTOR_EN 4                                 // motor enable pin
@@ -32,7 +28,7 @@
 #define MOTOR_IN2 6                                // motor dir pin 2
 #define MOTOR_BUTTON 9                             // button to force motor
 unsigned long timeWaterStart;                      // in msec
-const unsigned long waterGiveDuration = 10 * 1000; // in msec
+const unsigned long waterGiveDuration = 10 * 1000; // in msec = 10 sec
 // #define MOTOR_LED 10                               // motor status led
 
 // define global sensor data variables
@@ -41,6 +37,7 @@ float temp_val;
 int light_level;
 int moist_top;
 int moist_bottom;
+int moist_extra;
 
 // shit for led
 bool LED_status = false;
@@ -54,6 +51,10 @@ DHT dht(DHTPIN, DHTTYPE);
 
 void setup()
 {
+    // disable WDT
+    wdt_disable();
+    delay(500);
+
     // begin Serial (debug) and SoftwareSerial (communication arduino)
     Serial.begin(115200);
     ssa.begin(115200);
@@ -65,6 +66,7 @@ void setup()
     pinMode(LIGHT_SENSOR, INPUT);
     pinMode(MOIST_SENSOR_TOP, INPUT);
     pinMode(MOIST_SENSOR_BOTTOM, INPUT);
+    pinMode(MOIST_SENSOR_EXTRA, INPUT);
 
     // init motor
     initMotor();
@@ -82,22 +84,29 @@ void setup()
 
     // let know booted
     Serial.println("Ready for work");
-}
 
-int button_state = 0;
-int prev_button_state = 0;
+    // setup watchdog timer (WDT)
+    wdt_enable(WDTO_4S);
+}
 
 void loop()
 {
+    // reset WDT
+    wdt_reset();
+
+    // FORCE WATER
     // check for button input and turn on motor if pressed
-    button_state = digitalRead(MOTOR_BUTTON);
-    if (button_state != prev_button_state)
+    int button_state = digitalRead(MOTOR_BUTTON);
+    while (button_state)
     {
-        // set it to high or low depending on change
+        // read the current buttonstate, and write it to the motor enable pin
+        button_state = digitalRead(MOTOR_BUTTON);
         digitalWrite(MOTOR_EN, button_state);
+        // wdt reset while button pressed
+        // wdt_reset();
     }
 
-    // serial events...
+    // NORMAL SERIAL EVENTS
     char receive = NULL;
     if (ssa.available() > 0)
     {
@@ -113,31 +122,19 @@ void loop()
         break;
     case 'J':
         // send the requested data
-        serialSendDataJson();    // send the data
-        serialPrettyPrintData(); // print the sensor data
+        serialSendDataJson(); // send the data
+        // serialPrettyPrintData(); // print the sensor data
         break;
     case 'S':
         // switch the LED_PIN
         switchLED();
         break;
     case 'W':
-        Serial.println("wattering is not finished");
+        Serial.println("Starting the water flow");
         // give water to the plant! (holds system for 10 seconds... )
         waterPlant();
         // flush software serial after to discard commands during waterring
         softSerialFlush();
-        break;
-    case 'R':
-        // code to init reset ESP and nano
-        Serial.println("Resetting ESP8266...");
-        digitalWrite(ESP_RESET_PIN, HIGH);
-        delay(100);
-        digitalWrite(ESP_RESET_PIN, LOW);
-        Serial.print("Done, waiting for reset signal from NodeMCU.");
-        while (1)
-        {
-            Serial.print(".");
-        }
         break;
     }
 }
@@ -155,6 +152,7 @@ int readSensorData()
     int light_level_array[n];  // int light_level;
     int moist_top_array[n];    // int moist_top;
     int moist_bottom_array[n]; // int moist_bottom;
+    int moist_extra_array[n];  // int moist_extras;
 
     // read sensor data n times
     for (int i = 0; i < n; i++)
@@ -173,6 +171,7 @@ int readSensorData()
         // read soil moisture (inverse, makes more sense)
         moist_top_array[i] = 1024 - analogRead(MOIST_SENSOR_TOP);
         moist_bottom_array[i] = 1024 - analogRead(MOIST_SENSOR_BOTTOM);
+        moist_extra_array[i] = 1024 - analogRead(MOIST_SENSOR_EXTRA);
     }
 
     // calculate the averages
@@ -181,6 +180,7 @@ int readSensorData()
     light_level = calcAverage(light_level_array, n);
     moist_top = calcAverage(moist_top_array, n);
     moist_bottom = calcAverage(moist_bottom_array, n);
+    moist_extra = calcAverage(moist_extra_array, n);
 
     return 1;
 }
@@ -232,6 +232,7 @@ int serialSendDataJson()
     root["ll"] = light_level;  // root["light_level"] = light_level;
     root["mt"] = moist_top;    // root["moist_top"] = moist_top;
     root["mb"] = moist_bottom; // root["moist_bottom"] = moist_bottom;
+    root["me"] = moist_extra;  // root["moist_extra"] = moist_extra;
 
     // send json bubber
     root.printTo(ssa);
@@ -284,22 +285,18 @@ void initMotor()
     digitalWrite(MOTOR_IN2, LOW);  // reverse
 }
 
-// function to water the plant!
+// function to water the plant
 void waterPlant()
 {
     // status message
     Serial.println("waterring");
 
     // start water moment
-    timeWaterStart = millis();
     digitalWrite(MOTOR_EN, HIGH);
     // digitalWrite(MOTOR_LED, HIGH);
 
-    // while loop to water
-    while (millis() - timeWaterStart < waterGiveDuration)
-    {
-        ;
-    }
+    // delay to keep water flowing
+    delay(waterGiveDuration);
 
     // stop motor
     digitalWrite(MOTOR_EN, LOW);

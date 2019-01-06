@@ -47,22 +47,56 @@
 
 // =====================================
 
+// void setup()
+// {
+//     pinMode(7, INPUT);
+//     Serial.begin(115200);
+// }
+
+// void loop()
+// {
+//     int r = digitalRead(7);
+//     if (digitalRead(7))
+//     {
+//         Serial.println(r);
+//     }
+//     else
+//     {
+//         Serial.println(r);
+//     }
+//     delay(100);
+// }
+
+// =====================================
+//      TEST WDT
+// =====================================
+
+#include <avr/wdt.h>
+
 void setup()
 {
-    pinMode(7, INPUT);
     Serial.begin(115200);
+    pinMode(4, OUTPUT);
+    digitalWrite(4, HIGH);
+
+    pinMode(7, OUTPUT);
+    digitalWrite(7, HIGH);
+
+    wdt_enable(WDTO_4S);
 }
 
+int count = 0;
 void loop()
 {
-    int r = digitalRead(7);
-    if (digitalRead(7))
-    {
-        Serial.println(r);
-    }
-    else
-    {
-        Serial.println(r);
-    }
-    delay(100);
+
+    // if (count > 10)
+    // {
+    //     wdt_reset();
+    //     delay(2500);
+    //     wdt_reset();
+    //     delay(2500);
+    // }
+
+    count++;
+    Serial.println(count);
 }

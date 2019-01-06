@@ -1,6 +1,6 @@
 {
     "sketch": "motor_test.ino",
     "board": "WAV:avr:lardu_328e",
-    "port": "COM4",
+    "port": "COM5",
     "output": ".build"
 }

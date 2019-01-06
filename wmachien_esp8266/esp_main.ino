@@ -34,6 +34,9 @@
         D10         1
 */
 
+// TODO:
+//      - add last water time
+
 // include libraries
 #include <SPI.h>              // SPI library for SDcard module
 #include <SD.h>               // SD library for writing and reading files on SDcard
@@ -50,7 +53,6 @@
 #define GPIO2 2                       // D4 = 2
 #define GPIO0_PIN 0                   // D3 = 0
 #define GPIO2_PIN 2                   // D4 = 2
-#define NANO_RESET_PIN 14             // D5
 boolean gpioState[] = {false, false}; // We assume that all GPIOs are LOW
 
 // WiFi
@@ -86,6 +88,7 @@ bool LED_status = false;
 // sensor data variables
 int moist_top;                      // moisture at the top
 int moist_bottom;                   // moisture at the bottom
+int moist_extra;                    // moisture at the extra sensor
 int light_level;                    // light level (1 or 0)
 float hum_val;                      // air humidity
 float temp_val;                     // air temperature
@@ -112,10 +115,8 @@ void setup()
     // pins for mqtt gpio control, set mode and set low
     pinMode(GPIO0_PIN, OUTPUT);
     pinMode(GPIO2_PIN, OUTPUT);
-    pinMode(NANO_RESET_PIN, OUTPUT);
     digitalWrite(GPIO0_PIN, LOW);
     digitalWrite(GPIO2_PIN, LOW);
-    digitalWrite(NANO_RESET_PIN, LOW);
 
     // initialize the SD card
     initSDCard();
@@ -126,15 +127,14 @@ void setup()
     // start UDP
     startUDP();
 
-    // reset the arduino nano
-    resetNano();
-
     // start MQTT connection
     client.setServer(thingsboardServer, 1883);
     client.setCallback(mqttCallbackOnMessage);
 
     // init the timers
     storeCurrentTime(/* printing */ false);
+
+    // init Watchdog Timer
 }
 
 /*===================================================================
@@ -142,11 +142,10 @@ void setup()
 ===================================================================*/
 void loop()
 {
-    // check if time to reset system
+    // check if restart esp required
     if (millis() > system_restart_duration)
     {
-        // write 'R' to call for a reset
-        ssa.write('R');
+        ESP.restart();
     }
 
     // if 10 minutes past since last time update, get new time:
@@ -180,16 +179,7 @@ void loop()
         Serial.println("reconnecting to mqtt broker");
         mqttReconnect();
     }
-    client.loop();
-    // bool isLooping = client.loop();
-    // if (isLooping)
-    // {
-    //     Serial.println("looping connection good");
-    // }
-    // else
-    // {
-    //     Serial.println("looping no goood");
-    // }
+    client.loop(); // needed to listen for mqtt messages
 
     // switch LED on nano debug, and on ESP8266 for effect with delay of 500 msec
     if (millis() - lastFlash > 500)
@@ -257,7 +247,9 @@ void writeToSD()
         dataFile.print(',');
         dataFile.print(hum_val);
         dataFile.print(',');
-        dataFile.println(temp_val);
+        dataFile.print(temp_val);
+        dataFile.print(',');
+        dataFile.println(moist_extra);
 
         // close file after writing
         dataFile.close();
@@ -487,6 +479,7 @@ void mqttSendData()
 
     String s_moist_top = String(moist_top);
     String s_moist_bottom = String(moist_bottom);
+    String s_moist_extra = String(moist_extra);
     String s_light_level = String(light_level);
     String s_hum_val = String(hum_val);
     String s_temp_val = String(temp_val);
@@ -499,6 +492,9 @@ void mqttSendData()
     payload += ",";
     payload += "\"moistbottom\":";
     payload += s_moist_bottom;
+    payload += ",";
+    payload += "\"moistextra\":";
+    payload += s_moist_extra;
     payload += ",";
     payload += "\"lightlevel\":";
     payload += s_light_level;
@@ -584,6 +580,7 @@ int receiveJsonData()
     light_level = root["ll"];  // light_level = root["light_level"];
     moist_top = root["mt"];    // moist_top = root["moist_top"];
     moist_bottom = root["mb"]; // moist_bottom = root["moist_bottom"];
+    moist_extra = root["me"];  // moist_extra = root["moist_extra"];
 
     // let nano know data parsed succesfully
     // ssa.write('y');
@@ -612,15 +609,6 @@ void switchLED()
 {
     LED_status = !LED_status;
     digitalWrite(LED_BUILTIN, LED_status);
-}
-
-// method to reset the arduino nano
-void resetNano()
-{
-    Serial.println("Resetting the nano");
-    digitalWrite(NANO_RESET_PIN, HIGH);
-    delay(100);
-    digitalWrite(NANO_RESET_PIN, LOW);
 }
 
 // ===========================================================================
